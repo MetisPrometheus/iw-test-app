@@ -34,37 +34,38 @@ const countryName = (f: CountryFeature): string =>
 const CITIES_URL =
   "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_populated_places_simple.geojson";
 
-const COUNTRIES_50M_URL =
-  "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson";
+const COUNTRIES_TOPO = "https://unpkg.com/world-atlas@2.0.2/countries-110m.json";
 
-const COUNTRIES_110M_TOPO = "https://unpkg.com/world-atlas@2.0.2/countries-110m.json";
+const altitudeTier = (a: number): number =>
+  a > 1.7 ? 0 : a > 1.2 ? 1 : a > 0.8 ? 2 : a > 0.45 ? 3 : 4;
+
+const TIER_RANK_CUTOFF = [-1, 1, 3, 6, 10] as const;
+const TIER_MAX_CITIES = [0, 25, 60, 120, 200] as const;
 
 export default function InteractiveGlobe() {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [countries, setCountries] = useState<CountryFeature[]>([]);
   const [cities, setCities] = useState<City[]>([]);
   const [selected, setSelected] = useState<CountryFeature | null>(null);
-  const [altitude, setAltitude] = useState(2.4);
+  const [tier, setTier] = useState(0);
+  const tierRef = useRef(0);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const isMobile = useMemo(
+    () => (size.w > 0 ? size.w < 768 : false),
+    [size.w],
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(COUNTRIES_50M_URL);
-        if (!r.ok) throw new Error("50m fetch failed");
-        const geo = (await r.json()) as CountriesGeoJSON;
+        const r = await fetch(COUNTRIES_TOPO);
+        const topo = await r.json();
+        const { feature } = await import("topojson-client");
+        const geo = feature(topo, topo.objects.countries) as unknown as CountriesGeoJSON;
         if (!cancelled) setCountries(geo.features);
       } catch {
-        try {
-          const r = await fetch(COUNTRIES_110M_TOPO);
-          const topo = await r.json();
-          const { feature } = await import("topojson-client");
-          const geo = feature(topo, topo.objects.countries) as unknown as CountriesGeoJSON;
-          if (!cancelled) setCountries(geo.features);
-        } catch {
-          /* ignore */
-        }
+        /* ignore */
       }
     })();
     return () => {
@@ -76,23 +77,31 @@ export default function InteractiveGlobe() {
     let cancelled = false;
     fetch(CITIES_URL)
       .then((r) => r.json())
-      .then((geo: { features: Array<{ properties: Record<string, unknown>; geometry: { coordinates: [number, number] } }> }) => {
-        if (cancelled) return;
-        const list: City[] = geo.features
-          .map((f) => {
-            const p = f.properties;
-            const [lng, lat] = f.geometry.coordinates;
-            return {
-              name: (p.name as string) || (p.NAME as string) || "",
-              lat,
-              lng,
-              pop: Number(p.pop_max ?? p.POP_MAX ?? 0),
-              rank: Number(p.scalerank ?? p.SCALERANK ?? 10),
-            };
-          })
-          .filter((c) => c.name);
-        setCities(list);
-      })
+      .then(
+        (geo: {
+          features: Array<{
+            properties: Record<string, unknown>;
+            geometry: { coordinates: [number, number] };
+          }>;
+        }) => {
+          if (cancelled) return;
+          const list: City[] = geo.features
+            .map((f) => {
+              const p = f.properties;
+              const [lng, lat] = f.geometry.coordinates;
+              return {
+                name: (p.name as string) || (p.NAME as string) || "",
+                lat,
+                lng,
+                pop: Number(p.pop_max ?? p.POP_MAX ?? 0),
+                rank: Number(p.scalerank ?? p.SCALERANK ?? 10),
+              };
+            })
+            .filter((c) => c.name)
+            .sort((a, b) => b.pop - a.pop);
+          setCities(list);
+        },
+      )
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -109,44 +118,50 @@ export default function InteractiveGlobe() {
   useEffect(() => {
     if (!globeRef.current) return;
     const controls = globeRef.current.controls();
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.35;
+    controls.autoRotate = !isMobile;
+    controls.autoRotateSpeed = 0.3;
     controls.enableDamping = true;
     controls.rotateSpeed = 0.7;
     controls.zoomSpeed = 0.8;
     globeRef.current.pointOfView({ altitude: 2.4 }, 0);
-  }, [countries.length]);
+
+    const renderer = globeRef.current.renderer();
+    if (renderer) {
+      const cap = isMobile ? 1.25 : 1.75;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+    }
+  }, [countries.length, isMobile]);
 
   const visibleCities = useMemo(() => {
-    if (!cities.length) return [];
-    if (altitude > 1.7) return [];
-    const rankCutoff = altitude > 1.2 ? 1 : altitude > 0.8 ? 3 : altitude > 0.45 ? 6 : 10;
-    return cities.filter((c) => c.rank <= rankCutoff);
-  }, [cities, altitude]);
+    if (!cities.length || tier === 0) return [];
+    const rankCutoff = TIER_RANK_CUTOFF[tier];
+    const maxN = TIER_MAX_CITIES[tier];
+    const mobileScale = isMobile ? 0.5 : 1;
+    return cities
+      .filter((c) => c.rank <= rankCutoff)
+      .slice(0, Math.floor(maxN * mobileScale));
+  }, [cities, tier, isMobile]);
 
-  const cityDotSize = useMemo(
-    () => Math.max(0.05, Math.min(0.25, altitude * 0.12)),
-    [altitude],
-  );
-
-  const labelSize = useMemo(
-    () => Math.max(0.18, Math.min(0.55, altitude * 0.32)),
-    [altitude],
-  );
+  const labelSize = useMemo(() => (isMobile ? 0.32 : 0.42), [isMobile]);
+  const dotRadius = useMemo(() => (isMobile ? 0.18 : 0.22), [isMobile]);
 
   const polygonCapColor = useMemo(
     () => (d: object) =>
-      d === selected ? "rgba(96, 165, 250, 0.85)" : "rgba(30, 64, 175, 0.12)",
+      d === selected ? "rgba(96, 165, 250, 0.85)" : "rgba(30, 64, 175, 0.0)",
     [selected],
   );
 
   const polygonAltitude = useMemo(
-    () => (d: object) => (d === selected ? 0.04 : 0.006),
+    () => (d: object) => (d === selected ? 0.04 : 0.001),
     [selected],
   );
 
   const handleZoom = useCallback((pov: { altitude: number }) => {
-    setAltitude(pov.altitude);
+    const t = altitudeTier(pov.altitude);
+    if (t !== tierRef.current) {
+      tierRef.current = t;
+      setTier(t);
+    }
   }, []);
 
   return (
@@ -158,16 +173,16 @@ export default function InteractiveGlobe() {
           height={size.h}
           backgroundColor="rgba(0,0,0,0)"
           globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-          bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
+          bumpImageUrl={isMobile ? undefined : "//unpkg.com/three-globe/example/img/earth-topology.png"}
           showAtmosphere
           atmosphereColor="#60a5fa"
           atmosphereAltitude={0.18}
           polygonsData={countries}
           polygonAltitude={polygonAltitude}
           polygonCapColor={polygonCapColor}
-          polygonSideColor={() => "rgba(30, 64, 175, 0.2)"}
+          polygonSideColor={() => "rgba(30, 64, 175, 0.15)"}
           polygonStrokeColor={() => "rgba(191, 219, 254, 0.45)"}
-          polygonsTransitionDuration={250}
+          polygonsTransitionDuration={0}
           onPolygonClick={(p) => {
             const f = p as CountryFeature;
             setSelected((curr) => (curr === f ? null : f));
@@ -180,9 +195,9 @@ export default function InteractiveGlobe() {
           pointLat={(d: object) => (d as City).lat}
           pointLng={(d: object) => (d as City).lng}
           pointAltitude={0.005}
-          pointRadius={cityDotSize}
+          pointRadius={dotRadius}
           pointColor={() => "rgba(253, 224, 71, 0.95)"}
-          pointResolution={6}
+          pointResolution={5}
           pointsMerge
           labelsData={visibleCities}
           labelLat={(d: object) => (d as City).lat}
@@ -191,7 +206,7 @@ export default function InteractiveGlobe() {
           labelSize={labelSize}
           labelDotRadius={0}
           labelColor={() => "rgba(248, 250, 252, 0.92)"}
-          labelResolution={2}
+          labelResolution={1}
           labelAltitude={0.012}
           labelIncludeDot={false}
           onZoom={handleZoom}
