@@ -127,7 +127,7 @@ export default function InteractiveGlobe() {
 
     const renderer = globeRef.current.renderer();
     if (renderer) {
-      const cap = isMobile ? 1.25 : 1.75;
+      const cap = isMobile ? 1.5 : 1.75;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
     }
   }, [countries.length, isMobile]);
@@ -169,16 +169,8 @@ export default function InteractiveGlobe() {
           width={size.w}
           height={size.h}
           backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl={
-            isMobile
-              ? "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-              : "https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/2_no_clouds_4k.jpg"
-          }
-          bumpImageUrl={
-            isMobile
-              ? undefined
-              : "https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/elev_bump_4k.jpg"
-          }
+          globeImageUrl="https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/2_no_clouds_4k.jpg"
+          bumpImageUrl="https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/elev_bump_4k.jpg"
           showAtmosphere
           atmosphereColor="#60a5fa"
           atmosphereAltitude={0.18}
