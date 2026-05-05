@@ -37,10 +37,10 @@ const CITIES_URL =
 const COUNTRIES_TOPO = "https://unpkg.com/world-atlas@2.0.2/countries-110m.json";
 
 const altitudeTier = (a: number): number =>
-  a > 1.7 ? 0 : a > 1.2 ? 1 : a > 0.8 ? 2 : a > 0.45 ? 3 : 4;
+  a > 1.7 ? 0 : a > 1.2 ? 1 : a > 0.8 ? 2 : a > 0.25 ? 3 : 4;
 
-const TIER_RANK_CUTOFF = [-1, 1, 3, 6, 10] as const;
-const TIER_MAX_CITIES = [0, 25, 60, 120, 200] as const;
+const TIER_RANK_CUTOFF = [-1, 1, 3, 6, 0, 0] as const;
+const TIER_MAX_CITIES = [0, 25, 60, 100, 0, 0] as const;
 
 const tileEngineUrl = (x: number, y: number, level: number): string =>
   `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`;
@@ -138,7 +138,7 @@ export default function InteractiveGlobe() {
   }, [countries.length, isMobile]);
 
   const visibleCities = useMemo(() => {
-    if (!cities.length || tier === 0) return [];
+    if (!cities.length || tier === 0 || tier >= 4) return [];
     const rankCutoff = TIER_RANK_CUTOFF[tier];
     const maxN = TIER_MAX_CITIES[tier];
     const mobileScale = isMobile ? 0.5 : 1;
@@ -147,8 +147,26 @@ export default function InteractiveGlobe() {
       .slice(0, Math.floor(maxN * mobileScale));
   }, [cities, tier, isMobile]);
 
-  const labelSize = useMemo(() => (isMobile ? 0.32 : 0.42), [isMobile]);
-  const dotRadius = useMemo(() => (isMobile ? 0.18 : 0.22), [isMobile]);
+  const renderCityElement = useCallback((d: object): HTMLElement => {
+    const city = d as City;
+    const el = document.createElement("div");
+    el.className =
+      "pointer-events-none flex select-none items-center gap-1 whitespace-nowrap text-[11px] font-medium tracking-wide text-slate-100/95";
+    el.style.transform = "translate(-50%, -100%)";
+    el.style.textShadow = "0 1px 2px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.6)";
+    const dot = document.createElement("span");
+    dot.style.width = "5px";
+    dot.style.height = "5px";
+    dot.style.borderRadius = "9999px";
+    dot.style.background = "rgba(248, 250, 252, 0.95)";
+    dot.style.boxShadow = "0 0 0 1px rgba(15, 23, 42, 0.7), 0 0 4px rgba(96, 165, 250, 0.5)";
+    dot.style.marginRight = "4px";
+    const label = document.createElement("span");
+    label.textContent = city.name;
+    el.appendChild(dot);
+    el.appendChild(label);
+    return el;
+  }, []);
 
   const polygonCapColor = useMemo(
     () => (d: object) =>
@@ -195,24 +213,11 @@ export default function InteractiveGlobe() {
               controls.autoRotate = false;
             }
           }}
-          pointsData={visibleCities}
-          pointLat={(d: object) => (d as City).lat}
-          pointLng={(d: object) => (d as City).lng}
-          pointAltitude={0.005}
-          pointRadius={dotRadius}
-          pointColor={() => "rgba(253, 224, 71, 0.95)"}
-          pointResolution={5}
-          pointsMerge
-          labelsData={visibleCities}
-          labelLat={(d: object) => (d as City).lat}
-          labelLng={(d: object) => (d as City).lng}
-          labelText={(d: object) => (d as City).name}
-          labelSize={labelSize}
-          labelDotRadius={0}
-          labelColor={() => "rgba(248, 250, 252, 0.92)"}
-          labelResolution={1}
-          labelAltitude={0.012}
-          labelIncludeDot={false}
+          htmlElementsData={visibleCities}
+          htmlLat={(d: object) => (d as City).lat}
+          htmlLng={(d: object) => (d as City).lng}
+          htmlAltitude={0.01}
+          htmlElement={renderCityElement}
           onZoom={handleZoom}
         />
       )}
