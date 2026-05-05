@@ -1,232 +1,153 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
-import type { GlobeMethods } from "react-globe.gl";
+import { useCallback, useMemo, useRef, useState } from "react";
+import Map, {
+  Source,
+  Layer,
+  type MapRef,
+  type MapMouseEvent,
+} from "react-map-gl/mapbox";
+import "mapbox-gl/dist/mapbox-gl.css";
 
-const Globe = dynamic(() => import("react-globe.gl"), { ssr: false });
+const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
-type CountryFeature = {
-  type: "Feature";
-  properties: { name?: string; NAME?: string; ADMIN?: string; [k: string]: unknown };
-  geometry: unknown;
-};
+const STYLE = "mapbox://styles/mapbox/satellite-streets-v12";
 
-type CountriesGeoJSON = {
-  type: "FeatureCollection";
-  features: CountryFeature[];
-};
+const STRIP_LAYER_PATTERNS = [
+  /^road/i,
+  /^bridge/i,
+  /^tunnel/i,
+  /^transit/i,
+  /^ferry/i,
+  /^aeroway/i,
+  /^golf/i,
+  /^pedestrian/i,
+  /^path/i,
+];
 
-type City = {
+type Selected = {
+  iso: string;
   name: string;
-  lat: number;
-  lng: number;
-  pop: number;
-  rank: number;
 };
-
-const countryName = (f: CountryFeature): string =>
-  (f.properties?.ADMIN as string) ||
-  (f.properties?.NAME as string) ||
-  (f.properties?.name as string) ||
-  "Unknown";
-
-const CITIES_URL =
-  "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_populated_places_simple.geojson";
-
-const COUNTRIES_TOPO = "https://unpkg.com/world-atlas@2.0.2/countries-110m.json";
-
-const altitudeTier = (a: number): number =>
-  a > 1.7 ? 0 : a > 1.2 ? 1 : a > 0.8 ? 2 : a > 0.25 ? 3 : 4;
-
-const TIER_RANK_CUTOFF = [-1, 1, 3, 6, 0, 0] as const;
-const TIER_MAX_CITIES = [0, 25, 60, 100, 0, 0] as const;
-
-const tileEngineUrl = (x: number, y: number, level: number): string =>
-  `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${level}/${y}/${x}`;
 
 export default function InteractiveGlobe() {
-  const globeRef = useRef<GlobeMethods | undefined>(undefined);
-  const [countries, setCountries] = useState<CountryFeature[]>([]);
-  const [cities, setCities] = useState<City[]>([]);
-  const [selected, setSelected] = useState<CountryFeature | null>(null);
-  const [tier, setTier] = useState(0);
-  const tierRef = useRef(0);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  const isMobile = useMemo(
-    () => (size.w > 0 ? size.w < 768 : false),
-    [size.w],
-  );
+  const mapRef = useRef<MapRef | null>(null);
+  const [selected, setSelected] = useState<Selected | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(COUNTRIES_TOPO);
-        const topo = await r.json();
-        const { feature } = await import("topojson-client");
-        const geo = feature(topo, topo.objects.countries) as unknown as CountriesGeoJSON;
-        if (!cancelled) setCountries(geo.features);
-      } catch {
-        /* ignore */
+  const handleLoad = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    map.setFog({
+      color: "rgb(186, 210, 235)",
+      "high-color": "rgb(36, 92, 223)",
+      "horizon-blend": 0.04,
+      "space-color": "rgb(11, 11, 25)",
+      "star-intensity": 0.45,
+    } as Parameters<typeof map.setFog>[0]);
+
+    for (const layer of map.getStyle().layers ?? []) {
+      if (STRIP_LAYER_PATTERNS.some((re) => re.test(layer.id))) {
+        try {
+          map.removeLayer(layer.id);
+        } catch {
+          /* ignore */
+        }
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(CITIES_URL)
-      .then((r) => r.json())
-      .then(
-        (geo: {
-          features: Array<{
-            properties: Record<string, unknown>;
-            geometry: { coordinates: [number, number] };
-          }>;
-        }) => {
-          if (cancelled) return;
-          const list: City[] = geo.features
-            .map((f) => {
-              const p = f.properties;
-              const [lng, lat] = f.geometry.coordinates;
-              return {
-                name: (p.name as string) || (p.NAME as string) || "",
-                lat,
-                lng,
-                pop: Number(p.pop_max ?? p.POP_MAX ?? 0),
-                rank: Number(p.scalerank ?? p.SCALERANK ?? 10),
-              };
-            })
-            .filter((c) => c.name)
-            .sort((a, b) => b.pop - a.pop);
-          setCities(list);
-        },
-      )
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    const update = () => setSize({ w: window.innerWidth, h: window.innerHeight });
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
-  useEffect(() => {
-    if (!globeRef.current) return;
-    const controls = globeRef.current.controls();
-    controls.autoRotate = !isMobile;
-    controls.autoRotateSpeed = 0.3;
-    controls.enableDamping = true;
-    controls.rotateSpeed = 0.7;
-    controls.zoomSpeed = 0.8;
-    const radius = globeRef.current.getGlobeRadius?.() ?? 100;
-    controls.minDistance = radius * 1.0008;
-    globeRef.current.pointOfView({ altitude: 2.4 }, 0);
-
-    const renderer = globeRef.current.renderer();
-    if (renderer) {
-      const cap = isMobile ? 1.5 : 1.75;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
     }
-  }, [countries.length, isMobile]);
-
-  const visibleCities = useMemo(() => {
-    if (!cities.length || tier === 0 || tier >= 4) return [];
-    const rankCutoff = TIER_RANK_CUTOFF[tier];
-    const maxN = TIER_MAX_CITIES[tier];
-    const mobileScale = isMobile ? 0.5 : 1;
-    return cities
-      .filter((c) => c.rank <= rankCutoff)
-      .slice(0, Math.floor(maxN * mobileScale));
-  }, [cities, tier, isMobile]);
-
-  const renderCityElement = useCallback((d: object): HTMLElement => {
-    const city = d as City;
-    const el = document.createElement("div");
-    el.className =
-      "pointer-events-none flex select-none items-center gap-1 whitespace-nowrap text-[11px] font-medium tracking-wide text-slate-100/95";
-    el.style.transform = "translate(-50%, -100%)";
-    el.style.textShadow = "0 1px 2px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.6)";
-    const dot = document.createElement("span");
-    dot.style.width = "5px";
-    dot.style.height = "5px";
-    dot.style.borderRadius = "9999px";
-    dot.style.background = "rgba(248, 250, 252, 0.95)";
-    dot.style.boxShadow = "0 0 0 1px rgba(15, 23, 42, 0.7), 0 0 4px rgba(96, 165, 250, 0.5)";
-    dot.style.marginRight = "4px";
-    const label = document.createElement("span");
-    label.textContent = city.name;
-    el.appendChild(dot);
-    el.appendChild(label);
-    return el;
   }, []);
 
-  const polygonCapColor = useMemo(
-    () => (d: object) =>
-      d === selected ? "rgba(96, 165, 250, 0.55)" : "rgba(30, 64, 175, 0.0)",
+  const handleClick = useCallback((e: MapMouseEvent) => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const features = map.queryRenderedFeatures(e.point, {
+      layers: ["country-fill"],
+    });
+    const feature = features[0];
+    if (!feature) {
+      setSelected(null);
+      return;
+    }
+    const props = feature.properties ?? {};
+    const iso = (props.iso_3166_1_alpha_3 as string) || (props.iso_3166_1 as string) || "";
+    const name = (props.name_en as string) || (props.name as string) || iso || "Unknown";
+    setSelected((curr) => (curr?.iso === iso ? null : { iso, name }));
+  }, []);
+
+  const fillFilter = useMemo<["==", string, string]>(
+    () => ["==", "iso_3166_1_alpha_3", selected?.iso ?? "__none__"],
     [selected],
   );
 
-  const polygonAltitude = useMemo(() => () => 0.002, []);
-
-  const handleZoom = useCallback((pov: { altitude: number }) => {
-    const t = altitudeTier(pov.altitude);
-    if (t !== tierRef.current) {
-      tierRef.current = t;
-      setTier(t);
-    }
-  }, []);
+  if (!TOKEN) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-8 text-center">
+        <div className="max-w-md rounded-lg border border-blue-300/20 bg-slate-950/60 px-5 py-4 text-sm text-blue-100/90 backdrop-blur-md">
+          <div className="mb-2 font-semibold text-blue-200">
+            Mapbox token missing
+          </div>
+          Set <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">NEXT_PUBLIC_MAPBOX_TOKEN</code>{" "}
+          in <code className="rounded bg-slate-800 px-1.5 py-0.5 text-xs">.env.local</code> and your Vercel
+          project, then redeploy. Free token at{" "}
+          <span className="underline">account.mapbox.com</span>.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative h-full w-full">
-      {size.w > 0 && (
-        <Globe
-          ref={globeRef}
-          width={size.w}
-          height={size.h}
-          backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl="https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/2_no_clouds_4k.jpg"
-          bumpImageUrl="https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/elev_bump_4k.jpg"
-          globeTileEngineUrl={tileEngineUrl}
-          {...({ globeTileEngineMaxLevel: 19 } as object)}
-          showAtmosphere
-          atmosphereColor="#60a5fa"
-          atmosphereAltitude={0.18}
-          polygonsData={countries}
-          polygonAltitude={polygonAltitude}
-          polygonCapColor={polygonCapColor}
-          polygonSideColor={() => "rgba(30, 64, 175, 0.15)"}
-          polygonStrokeColor={() => "rgba(191, 219, 254, 0.45)"}
-          polygonsTransitionDuration={0}
-          onPolygonClick={(p) => {
-            const f = p as CountryFeature;
-            setSelected((curr) => (curr === f ? null : f));
-            if (globeRef.current) {
-              const controls = globeRef.current.controls();
-              controls.autoRotate = false;
-            }
-          }}
-          htmlElementsData={visibleCities}
-          htmlLat={(d: object) => (d as City).lat}
-          htmlLng={(d: object) => (d as City).lng}
-          htmlAltitude={0.01}
-          htmlElement={renderCityElement}
-          onZoom={handleZoom}
-        />
-      )}
+      <Map
+        ref={mapRef}
+        mapboxAccessToken={TOKEN}
+        mapStyle={STYLE}
+        projection={{ name: "globe" }}
+        initialViewState={{
+          longitude: 10,
+          latitude: 25,
+          zoom: 1.6,
+        }}
+        minZoom={0.6}
+        maxZoom={20}
+        renderWorldCopies={false}
+        attributionControl={false}
+        onLoad={handleLoad}
+        onClick={handleClick}
+        interactiveLayerIds={["country-fill"]}
+        cursor={selected ? "pointer" : "grab"}
+      >
+        <Source
+          id="country-boundaries"
+          type="vector"
+          url="mapbox://mapbox.country-boundaries-v1"
+        >
+          <Layer
+            id="country-fill"
+            type="fill"
+            source-layer="country_boundaries"
+            paint={{
+              "fill-color": "rgba(96, 165, 250, 0.0)",
+            }}
+          />
+          <Layer
+            id="country-fill-selected"
+            type="fill"
+            source-layer="country_boundaries"
+            filter={fillFilter}
+            paint={{
+              "fill-color": "rgba(96, 165, 250, 0.45)",
+              "fill-outline-color": "rgba(191, 219, 254, 0.9)",
+            }}
+          />
+        </Source>
+      </Map>
+
       <div className="pointer-events-none absolute left-1/2 top-4 -translate-x-1/2 select-none">
         <div className="rounded-full border border-blue-300/20 bg-slate-950/60 px-4 py-2 text-center text-sm text-blue-100 backdrop-blur-md sm:text-base">
           {selected ? (
             <span>
               <span className="text-blue-300/70">Selected:</span>{" "}
-              <span className="font-semibold">{countryName(selected)}</span>
+              <span className="font-semibold">{selected.name}</span>
             </span>
           ) : (
             <span className="text-blue-200/70">No country selected</span>
@@ -234,7 +155,7 @@ export default function InteractiveGlobe() {
         </div>
       </div>
       <div className="pointer-events-none absolute bottom-2 right-3 select-none text-[10px] tracking-wide text-blue-200/50">
-        Imagery © Esri, Maxar, Earthstar Geographics
+        © Mapbox · © Maxar · © OpenStreetMap
       </div>
     </div>
   );
