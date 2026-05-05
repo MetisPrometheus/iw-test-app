@@ -147,14 +147,11 @@ export default function InteractiveGlobe() {
 
   const polygonCapColor = useMemo(
     () => (d: object) =>
-      d === selected ? "rgba(96, 165, 250, 0.85)" : "rgba(30, 64, 175, 0.0)",
+      d === selected ? "rgba(96, 165, 250, 0.55)" : "rgba(30, 64, 175, 0.0)",
     [selected],
   );
 
-  const polygonAltitude = useMemo(
-    () => (d: object) => (d === selected ? 0.04 : 0.001),
-    [selected],
-  );
+  const polygonAltitude = useMemo(() => () => 0.002, []);
 
   const handleZoom = useCallback((pov: { altitude: number }) => {
     const t = altitudeTier(pov.altitude);
@@ -172,8 +169,16 @@ export default function InteractiveGlobe() {
           width={size.w}
           height={size.h}
           backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-          bumpImageUrl={isMobile ? undefined : "//unpkg.com/three-globe/example/img/earth-topology.png"}
+          globeImageUrl={
+            isMobile
+              ? "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+              : "https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/2_no_clouds_4k.jpg"
+          }
+          bumpImageUrl={
+            isMobile
+              ? undefined
+              : "https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/elev_bump_4k.jpg"
+          }
           showAtmosphere
           atmosphereColor="#60a5fa"
           atmosphereAltitude={0.18}
