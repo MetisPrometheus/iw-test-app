@@ -57,7 +57,8 @@ export const tileBounds = (x: number, y: number, z: number): TileBounds => {
 
 export const altitudeToZoom = (alt: number, mobile: boolean): number => {
   const table: Array<[number, number]> = [
-    [1.0, 0],
+    [1.6, 0],
+    [0.9, 2],
     [0.5, 3],
     [0.28, 4],
     [0.16, 5],

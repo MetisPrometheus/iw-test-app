@@ -22,7 +22,6 @@ type ThreeBits = {
   SRGBColorSpace: unknown;
   LinearMipmapLinearFilter: unknown;
   LinearFilter: unknown;
-  MeshLambertMaterial: new (opts: object) => Material;
   MeshBasicMaterial: new (opts: object) => Material;
 };
 
@@ -37,9 +36,6 @@ const loadThree = (): Promise<ThreeBits> => {
         SRGBColorSpace: THREE.SRGBColorSpace,
         LinearMipmapLinearFilter: THREE.LinearMipmapLinearFilter,
         LinearFilter: THREE.LinearFilter,
-        MeshLambertMaterial: THREE.MeshLambertMaterial as unknown as new (
-          opts: object,
-        ) => Material,
         MeshBasicMaterial: THREE.MeshBasicMaterial as unknown as new (
           opts: object,
         ) => Material,
@@ -95,7 +91,7 @@ export function useTileCache(
             tex.magFilter = three.LinearFilter as Texture["magFilter"];
             tex.needsUpdate = true;
             entry.texture = tex;
-            entry.material = new three.MeshLambertMaterial({
+            entry.material = new three.MeshBasicMaterial({
               map: tex,
               transparent: true,
               depthWrite: false,
