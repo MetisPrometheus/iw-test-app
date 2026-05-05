@@ -273,9 +273,7 @@ export default function InteractiveGlobe() {
               <span className="font-semibold">{countryName(selected)}</span>
             </span>
           ) : (
-            <span className="text-blue-200/80">
-              Drag to rotate · pinch / scroll to zoom · tap a country
-            </span>
+            <span className="text-blue-200/70">No country selected</span>
           )}
         </div>
       </div>
