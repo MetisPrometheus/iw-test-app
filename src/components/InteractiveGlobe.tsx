@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GlobeMethods } from "react-globe.gl";
+import { altitudeToZoom, visibleTiles, type TileBounds } from "./globeTiles";
+import { useTileCache } from "./useTileCache";
 
 const Globe = dynamic(() => import("react-globe.gl"), { ssr: false });
 
@@ -42,6 +44,12 @@ const altitudeTier = (a: number): number =>
 const TIER_RANK_CUTOFF = [-1, 1, 3, 6, 10] as const;
 const TIER_MAX_CITIES = [0, 25, 60, 120, 200] as const;
 
+const tileSetKey = (tiles: TileBounds[]): string =>
+  tiles
+    .map((t) => t.key)
+    .sort()
+    .join("|");
+
 export default function InteractiveGlobe() {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [countries, setCountries] = useState<CountryFeature[]>([]);
@@ -50,6 +58,9 @@ export default function InteractiveGlobe() {
   const [tier, setTier] = useState(0);
   const tierRef = useRef(0);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [tiles, setTiles] = useState<TileBounds[]>([]);
+  const [anisotropy, setAnisotropy] = useState(1);
+  const lastTileKeyRef = useRef<string>("");
   const isMobile = useMemo(
     () => (size.w > 0 ? size.w < 768 : false),
     [size.w],
@@ -129,8 +140,45 @@ export default function InteractiveGlobe() {
     if (renderer) {
       const cap = isMobile ? 1.5 : 1.75;
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+      setAnisotropy(renderer.capabilities.getMaxAnisotropy());
     }
   }, [countries.length, isMobile]);
+
+  const recomputeTiles = useCallback(() => {
+    if (!globeRef.current) return;
+    const pov = globeRef.current.pointOfView();
+    const z = altitudeToZoom(pov.altitude, isMobile);
+    if (z <= 0) {
+      if (lastTileKeyRef.current !== "") {
+        lastTileKeyRef.current = "";
+        setTiles([]);
+      }
+      return;
+    }
+    const maxTiles = isMobile ? 24 : 64;
+    const next = visibleTiles(pov.lat, pov.lng, pov.altitude, z, maxTiles);
+    const k = tileSetKey(next);
+    if (k !== lastTileKeyRef.current) {
+      lastTileKeyRef.current = k;
+      setTiles(next);
+    }
+  }, [isMobile]);
+
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const loop = (t: number) => {
+      if (t - last > 180) {
+        last = t;
+        recomputeTiles();
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [recomputeTiles]);
+
+  const readyTiles = useTileCache(tiles, anisotropy);
 
   const visibleCities = useMemo(() => {
     if (!cities.length || tier === 0) return [];
@@ -174,6 +222,14 @@ export default function InteractiveGlobe() {
           showAtmosphere
           atmosphereColor="#60a5fa"
           atmosphereAltitude={0.18}
+          tilesData={readyTiles}
+          tileLat={(d: object) => (d as (typeof readyTiles)[number]).lat}
+          tileLng={(d: object) => (d as (typeof readyTiles)[number]).lng}
+          tileWidth={(d: object) => (d as (typeof readyTiles)[number]).width}
+          tileHeight={(d: object) => (d as (typeof readyTiles)[number]).height}
+          tileMaterial={(d: object) => (d as (typeof readyTiles)[number]).material}
+          tileAltitude={0.0015}
+          tileCurvatureResolution={5}
           polygonsData={countries}
           polygonAltitude={polygonAltitude}
           polygonCapColor={polygonCapColor}
@@ -222,6 +278,9 @@ export default function InteractiveGlobe() {
             </span>
           )}
         </div>
+      </div>
+      <div className="pointer-events-none absolute bottom-2 right-3 select-none text-[10px] tracking-wide text-blue-200/50">
+        Imagery © Esri, Maxar, Earthstar Geographics
       </div>
     </div>
   );
