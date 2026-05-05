@@ -126,6 +126,8 @@ export default function InteractiveGlobe() {
     controls.enableDamping = true;
     controls.rotateSpeed = 0.7;
     controls.zoomSpeed = 0.8;
+    const radius = globeRef.current.getGlobeRadius?.() ?? 100;
+    controls.minDistance = radius * 1.0008;
     globeRef.current.pointOfView({ altitude: 2.4 }, 0);
 
     const renderer = globeRef.current.renderer();
@@ -175,6 +177,7 @@ export default function InteractiveGlobe() {
           globeImageUrl="https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/2_no_clouds_4k.jpg"
           bumpImageUrl="https://cdn.jsdelivr.net/gh/turban/webgl-earth@master/images/elev_bump_4k.jpg"
           globeTileEngineUrl={tileEngineUrl}
+          {...({ globeTileEngineMaxLevel: 19 } as object)}
           showAtmosphere
           atmosphereColor="#60a5fa"
           atmosphereAltitude={0.18}
